@@ -34,7 +34,7 @@ host_sdl_render_clear
 host_sdl_render_fill_rect
 host_sdl_render_debug_text
 host_sdl_render_present
-host_sdl_show_message_box
+host_sdl_show_message_box_desktop
 host_sdl_open_file_dialog
 host_update_download
 host_update_executable_path
@@ -42,3 +42,8 @@ host_update_replace_file
 host_update_delete_file
 host_update_make_directory
 host_update_launch
+host_sdl_get_key_from_scancode
+host_sdl_get_keyboard_focus
+host_sdl_show_cursor
+host_sdl_set_window_mouse_grab
+host_sdl_get_current_video_driver

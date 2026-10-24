@@ -96,6 +96,8 @@ bool SDL_ShowSimpleMessageBox(SDL_MessageBoxFlags flags, const char *title, cons
 }
 
 /* (up to three buttons, their ids those of the guest's) */
+/* (the desktop arm64 build has its own: port/linux/arm64/guest_desktop.c) */
+#ifdef HALO_ANDROID
 bool SDL_ShowMessageBox(const SDL_MessageBoxData *data, int *buttonid)
 {
 	const char *labels[3] = { NULL, NULL, NULL };
@@ -119,6 +121,7 @@ bool SDL_ShowMessageBox(const SDL_MessageBoxData *data, int *buttonid)
 		*buttonid = data->buttons[chosen].buttonID;
 	return true;
 }
+#endif
 
 void SDL_Delay(Uint32 milliseconds)
 {

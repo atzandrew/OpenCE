@@ -64,12 +64,12 @@ int host_sdl_render_clear(unsigned int renderer);
 int host_sdl_render_fill_rect(unsigned int renderer, const void *rectangle);
 int host_sdl_render_debug_text(unsigned int renderer, float x, float y, const char *text);
 int host_sdl_render_present(unsigned int renderer);
-int host_sdl_show_message_box(unsigned int flags, const char *title, const char *message, int button_count,
+int host_sdl_show_message_box_desktop(unsigned int flags, const char *title, const char *message, int button_count,
 	const int *button_flags, const int *button_ids, const char *button_texts, int *chosen);
 int host_sdl_open_file_dialog(int filter_count, const char *filter_names, const char *filter_patterns,
 	char *path, unsigned int size);
-int host_update_download(const char *url, const char *path, unsigned int progress, unsigned int context,
-	char *error, int error_size);
+int host_update_download(const char *url, const char *path, unsigned long long maximum, unsigned int progress,
+	unsigned int context, char *error, int error_size);
 int host_update_executable_path(char *path, int size);
 int host_update_replace_file(const char *path, const char *new_path, const char *old_path);
 void host_update_delete_file(const char *path);
@@ -760,7 +760,7 @@ bool SDL_ShowMessageBox(const SDL_MessageBoxData *data, int *button)
 		memcpy(texts + used, text, length);
 		used += length;
 	}
-	if (!host_sdl_show_message_box((unsigned int)data->flags, data->title ? data->title : "",
+	if (!host_sdl_show_message_box_desktop((unsigned int)data->flags, data->title ? data->title : "",
 		data->message ? data->message : "", count, flags, ids, texts, &chosen))
 	{
 		return false;
@@ -820,12 +820,12 @@ static void download_progress(unsigned int context, unsigned int received, unsig
 	binding->progress(binding->context, received, total);
 }
 
-int update_download(const char *url, const char *path, update_progress_proc progress, void *context,
-	char *error, int error_size)
+int update_download(const char *url, const char *path, unsigned long long maximum, update_progress_proc progress,
+	void *context, char *error, int error_size)
 {
 	struct download_progress binding = { progress, context };
 
-	return host_update_download(url, path, progress ? (unsigned int)(uintptr_t)download_progress : 0,
+	return host_update_download(url, path, maximum, progress ? (unsigned int)(uintptr_t)download_progress : 0,
 		(unsigned int)(uintptr_t)&binding, error, error_size);
 }
 
@@ -852,4 +852,129 @@ int update_make_directory(const char *path)
 int update_launch(const char *path)
 {
 	return host_update_launch(path);
+}
+
+/* ---------- calls the Linux desktop code made after the arm64 build
+was first written (sdl_platform.c, xinput_sdl.c, port_config.c, updater.c,
+menu_files.c, d3d8_gl.c) */
+
+unsigned int host_sdl_get_key_from_scancode(unsigned int scancode, unsigned int modifiers, int key_event);
+unsigned int host_sdl_get_keyboard_focus(void);
+int host_sdl_show_cursor(int show);
+int host_sdl_set_window_mouse_grab(unsigned int window, int grabbed);
+int host_sdl_get_current_video_driver(char *name, unsigned int size);
+
+SDL_Keycode SDL_GetKeyFromScancode(SDL_Scancode scancode, SDL_Keymod modifiers, bool key_event)
+{
+	return (SDL_Keycode)host_sdl_get_key_from_scancode((unsigned int)scancode, (unsigned int)modifiers,
+		key_event ? 1 : 0);
+}
+
+SDL_Window *SDL_GetKeyboardFocus(void)
+{
+	return (SDL_Window *)(uintptr_t)host_sdl_get_keyboard_focus();
+}
+
+bool SDL_ShowCursor(void)
+{
+	return host_sdl_show_cursor(1) != 0;
+}
+
+bool SDL_HideCursor(void)
+{
+	return host_sdl_show_cursor(0) != 0;
+}
+
+bool SDL_SetWindowMouseGrab(SDL_Window *window, bool grabbed)
+{
+	return host_sdl_set_window_mouse_grab(WINDOW(window), grabbed ? 1 : 0) != 0;
+}
+
+const char *SDL_GetCurrentVideoDriver(void)
+{
+	static char name[64];
+
+	if (!host_sdl_get_current_video_driver(name, sizeof(name)))
+		return NULL;
+	return name;
+}
+
+/* the window's HDR state: none, as the OpenGL ES renderer draws SDR, so
+sdl_platform.c keeps its defaults */
+SDL_PropertiesID SDL_GetWindowProperties(SDL_Window *window)
+{
+	(void)window;
+	return 0;
+}
+
+bool SDL_GetBooleanProperty(SDL_PropertiesID properties, const char *name, bool default_value)
+{
+	(void)properties;
+	(void)name;
+	return default_value;
+}
+
+float SDL_GetFloatProperty(SDL_PropertiesID properties, const char *name, float default_value)
+{
+	(void)properties;
+	(void)name;
+	return default_value;
+}
+
+/* a read-only stream over memory: a stdio FILE, as SDL_IOFromFile's */
+SDL_IOStream *SDL_IOFromConstMem(const void *memory, size_t size)
+{
+	if (!memory || !size)
+		return NULL;
+	return (SDL_IOStream *)fmemopen((void *)memory, size, "rb");
+}
+
+/* the whole file, with a 0 after it (as SDL's), which SDL_free frees */
+void *SDL_LoadFile(const char *path, size_t *size)
+{
+	FILE *file = fopen(path, "rb");
+	struct stat information;
+	unsigned char *data;
+	size_t length;
+
+	if (size)
+		*size = 0;
+	if (!file)
+		return NULL;
+	if (fstat(fileno(file), &information) != 0 || information.st_size < 0)
+	{
+		fclose(file);
+		return NULL;
+	}
+	length = (size_t)information.st_size;
+	data = malloc(length + 1);
+	if (!data || fread(data, 1, length, file) != length)
+	{
+		free(data);
+		fclose(file);
+		return NULL;
+	}
+	fclose(file);
+	data[length] = 0;
+	if (size)
+		*size = length;
+	return data;
+}
+
+bool SDL_GetPathInfo(const char *path, SDL_PathInfo *info)
+{
+	struct stat information;
+
+	if (!path || stat(path, &information) != 0)
+		return false;
+	if (info)
+	{
+		info->type = S_ISREG(information.st_mode) ? SDL_PATHTYPE_FILE :
+			S_ISDIR(information.st_mode) ? SDL_PATHTYPE_DIRECTORY : SDL_PATHTYPE_OTHER;
+		info->size = (Uint64)information.st_size;
+		info->create_time = (SDL_Time)information.st_ctim.tv_sec * 1000000000 + information.st_ctim.tv_nsec;
+		info->modify_time = (SDL_Time)information.st_mtim.tv_sec * 1000000000 + information.st_mtim.tv_nsec;
+		info->access_time = (SDL_Time)information.st_atim.tv_sec * 1000000000 + information.st_atim.tv_nsec;
+	}
+	return true;
 }

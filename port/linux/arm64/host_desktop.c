@@ -347,7 +347,7 @@ int host_sdl_render_present(uint32_t renderer)
 
 /* button_texts: the buttons' texts one after another, each NUL terminated;
 returns 1 and the button chosen in *chosen, else 0 */
-int host_sdl_show_message_box(uint32_t flags, const char *title, const char *message, int button_count,
+int host_sdl_show_message_box_desktop(uint32_t flags, const char *title, const char *message, int button_count,
 	const int32_t *button_flags, const int32_t *button_ids, const char *button_texts, int32_t *chosen)
 {
 	SDL_MessageBoxButtonData buttons[MESSAGE_BOX_BUTTONS];
@@ -445,12 +445,12 @@ static void download_progress(void *context, unsigned long long received, unsign
 
 /* progress: the guest's void (*)(unsigned int context, unsigned int received,
 unsigned int total), called on this thread */
-int host_update_download(const char *url, const char *path, uint32_t progress, uint32_t context,
-	char *error, int error_size)
+int host_update_download(const char *url, const char *path, uint64_t maximum, uint32_t progress,
+	uint32_t context, char *error, int error_size)
 {
 	struct download_progress binding = { progress, context };
 
-	return update_download(url, path, progress ? download_progress : NULL, &binding, error, error_size);
+	return update_download(url, path, maximum, progress ? download_progress : NULL, &binding, error, error_size);
 }
 
 int host_update_executable_path(char *path, int size)
@@ -476,4 +476,43 @@ int host_update_make_directory(const char *path)
 int host_update_launch(const char *path)
 {
 	return update_launch(path);
+}
+
+/* ---------- calls the Linux desktop code made after the arm64 build
+was first written (guest_desktop.c, at its end) */
+
+uint32_t host_sdl_get_key_from_scancode(uint32_t scancode, uint32_t modifiers, int key_event)
+{
+	return (uint32_t)SDL_GetKeyFromScancode((SDL_Scancode)scancode, (SDL_Keymod)modifiers, key_event != 0);
+}
+
+/* the window's handle (it has one already: host_sdl_handle_new keeps it),
+or 0 */
+uint32_t host_sdl_get_keyboard_focus(void)
+{
+	SDL_Window *window = SDL_GetKeyboardFocus();
+
+	return window ? host_sdl_handle_new(_handle_window, window) : 0;
+}
+
+int host_sdl_show_cursor(int show)
+{
+	return (show ? SDL_ShowCursor() : SDL_HideCursor()) ? 1 : 0;
+}
+
+int host_sdl_set_window_mouse_grab(uint32_t window, int grabbed)
+{
+	SDL_Window *object = window_of(window);
+
+	return object && SDL_SetWindowMouseGrab(object, grabbed != 0) ? 1 : 0;
+}
+
+int host_sdl_get_current_video_driver(char *name, uint32_t size)
+{
+	const char *driver = SDL_GetCurrentVideoDriver();
+
+	if (!driver || !size)
+		return 0;
+	snprintf(name, size, "%s", driver);
+	return 1;
 }
