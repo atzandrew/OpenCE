@@ -150,6 +150,10 @@ static const struct config_setting config_settings[] =
 		"Draw the menus' and HUD's text with the fonts in port/assets/fonts\n"
 		"(Overpass) at the resolution the game draws at, and the menus' titles\n"
 		"from port/assets/titles; false draws the maps' bitmap fonts and titles." },
+	{ "display.gles_mediump", _config_boolean, "false", "HALO_GLES_MEDIUMP", _environment_set_is_true,
+		_platform_all,
+		"OpenGL ES: the pixel shaders' colours in 16-bit (mediump) arithmetic,\n"
+		"faster on GPUs that have it (Mali); coordinates stay 32-bit." },
 	{ "display.shadow_resolution", _config_integer, "128", "HALO_SHADOW_RESOLUTION", _environment_value,
 		_platform_all,
 		"The size the objects' shadows are drawn at, in pixels each way: 128 as\n"

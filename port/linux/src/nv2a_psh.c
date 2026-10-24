@@ -21,6 +21,8 @@ Register values are clamped to [-1, 1] between stages, as on the hardware.
 #include <stdio.h>
 #include <stdlib.h>
 
+static const char *color_precision(void);
+
 enum
 {
 	_register_zero = 0,
@@ -193,7 +195,8 @@ static void combiner_stage(struct xgpu_text *text, const DWORD *state, int stage
 		DWORD inputs = alpha ? state[D3DRS_PSALPHAINPUTS0 + stage] : state[D3DRS_PSRGBINPUTS0 + stage];
 		DWORD outputs = alpha ? state[D3DRS_PSALPHAOUTPUTS0 + stage] : state[D3DRS_PSRGBOUTPUTS0 + stage];
 		unsigned long flags = outputs >> 12;
-		const char *type = alpha ? "float" : "vec3";
+		const char *type = alpha ? (*color_precision() ? "mediump float" : "float") :
+			(*color_precision() ? "mediump vec3" : "vec3");
 		const char *prefix = alpha ? "a" : "c";
 		const char *mapping = output_mapping(flags);
 		char mapped[64];
@@ -209,11 +212,11 @@ static void combiner_stage(struct xgpu_text *text, const DWORD *state, int stage
 		xgpu_text_append(text, ";\n");
 
 		if (!alpha && (flags & 0x02))
-			xgpu_text_append(text, "\t\tvec3 cAB = vec3(dot(cA, cB));\n");
+			xgpu_text_append(text, "\t\t%svec3 cAB = vec3(dot(cA, cB));\n", color_precision());
 		else
 			xgpu_text_append(text, "\t\t%s %sAB = %sA * %sB;\n", type, prefix, prefix, prefix);
 		if (!alpha && (flags & 0x01))
-			xgpu_text_append(text, "\t\tvec3 cCD = vec3(dot(cC, cD));\n");
+			xgpu_text_append(text, "\t\t%svec3 cCD = vec3(dot(cC, cD));\n", color_precision());
 		else
 			xgpu_text_append(text, "\t\t%s %sCD = %sC * %sD;\n", type, prefix, prefix, prefix);
 		if (flags & 0x04)
@@ -333,13 +336,37 @@ static void dot_input(struct xgpu_text *text, const DWORD *state, int stage)
 #define SHADER_VERSION \
 	"precision highp float;\n" \
 	"precision highp int;\n" \
-	"precision highp sampler2D;\n" \
-	"precision highp sampler3D;\n" \
-	"precision highp samplerCube;\n"
+	"precision %ssampler2D;\n" \
+	"precision %ssampler3D;\n" \
+	"precision %ssamplerCube;\n"
 #else
 #define SAMPLE_BIAS ""
 #define SHADER_VERSION "#version 450 core\n"
 #endif
+
+/* display.gles_mediump: the colours (the textures' texels, the vertex
+colours, the fog colour and the combiners' registers) in mediump, which the
+GPUs with 16-bit arithmetic (Mali) run at up to twice the rate. The NV2A's
+combiners hold 9 bits a channel, fewer than mediump's 11. Coordinates, dot
+products (texture coordinates and replaced depth), the fog distance and the
+lighting stay highp. Empty: all highp, and always on desktop OpenGL */
+static const char *color_precision(void)
+{
+#ifdef HALO_GLES
+	static int mediump = -1;
+
+	if (mediump < 0)
+		mediump = config_boolean("display.gles_mediump") ? 1 : 0;
+	return mediump ? "mediump " : "";
+#else
+	return "";
+#endif
+}
+
+static const char *sampler_precision(void)
+{
+	return *color_precision() ? "mediump " : "highp ";
+}
 
 static void sample(struct xgpu_text *text, const struct nv2a_pixel_shader_key *key, int stage, const char *coordinates)
 {
@@ -634,12 +661,19 @@ char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key)
 			"layout(binding = 0, offset = 0) uniform atomic_uint visible_samples;\n");
 	}
 #endif
+	{
+		const char *precision = color_precision();
+#ifdef HALO_GLES
+		const char *sampler = sampler_precision();
+
+		xgpu_text_append(&text, SHADER_VERSION, sampler, sampler, sampler);
+#else
+		xgpu_text_append(&text, SHADER_VERSION);
+#endif
+		xgpu_text_append(&text, "in %svec4 xD0;\nin %svec4 xD1;\nin %svec4 xB0;\nin %svec4 xB1;\n",
+			precision, precision, precision, precision);
+	}
 	xgpu_text_append(&text,
-		SHADER_VERSION
-		"in vec4 xD0;\n"
-		"in vec4 xD1;\n"
-		"in vec4 xB0;\n"
-		"in vec4 xB1;\n"
 		"in vec4 xT0;\n"
 		"in vec4 xT1;\n"
 		"in vec4 xT2;\n"
@@ -664,11 +698,13 @@ char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key)
 		"	return vec3(signed_byte(x.r), signed_byte(x.g), signed_byte(x.b));\n"
 		"}\n"
 		"void main()\n"
-		"{\n"
-		"\tvec4 v0 = xD0;\n"
-		"\tvec4 v1 = xD1;\n"
-		"\tvec4 t0 = vec4(0.0), t1 = vec4(0.0), t2 = vec4(0.0), t3 = vec4(0.0);\n"
-		"\tfloat dot0 = 0.0, dot1 = 0.0, dot2 = 0.0, dot3 = 0.0;\n");
+		"{\n");
+	xgpu_text_append(&text,
+		"\t%svec4 v0 = xD0;\n"
+		"\t%svec4 v1 = xD1;\n"
+		"\t%svec4 t0 = vec4(0.0), t1 = vec4(0.0), t2 = vec4(0.0), t3 = vec4(0.0);\n"
+		"\tfloat dot0 = 0.0, dot1 = 0.0, dot2 = 0.0, dot3 = 0.0;\n",
+		color_precision(), color_precision(), color_precision());
 	if (key->per_pixel_lighting)
 		xgpu_text_append(&text, "\tv0.rgb = model_lighting();\n");
 	if (replaces_depth(key))
@@ -701,42 +737,44 @@ char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key)
 		xgpu_text_append(&text, "\tfloat fog_factor = 1.0;\n");
 	}
 	xgpu_text_append(&text,
-		"\tvec4 fog = vec4(fog_color.rgb, clamp(fog_factor, 0.0, 1.0));\n"
-		"\tvec4 r0 = vec4(0.0, 0.0, 0.0, t0.a);\n"
-		"\tvec4 r1 = vec4(0.0);\n");
+		"\t%svec4 fog = vec4(fog_color.rgb, clamp(fog_factor, 0.0, 1.0));\n"
+		"\t%svec4 r0 = vec4(0.0, 0.0, 0.0, t0.a);\n"
+		"\t%svec4 r1 = vec4(0.0);\n",
+		color_precision(), color_precision(), color_precision());
 
 	for (stage = 0; stage < (int)combiner_count; stage++)
 		combiner_stage(&text, state, stage);
 
 	if (final_abcd == 0 && final_efg == 0)
 	{
-		xgpu_text_append(&text, "\tvec4 result = r0;\n");
+		xgpu_text_append(&text, "\t%svec4 result = r0;\n", color_precision());
 	}
 	else
 	{
 		unsigned long settings = final_efg & 0xff;
 
-		xgpu_text_append(&text, "\tvec4 ef_product = vec4(");
+		xgpu_text_append(&text, "\t%svec4 ef_product = vec4(", color_precision());
 		final_input(&text, (final_efg >> 24) & 0xff, FALSE);
 		xgpu_text_append(&text, " * ");
 		final_input(&text, (final_efg >> 16) & 0xff, FALSE);
 		xgpu_text_append(&text, ", 0.0);\n");
-		xgpu_text_append(&text, "\tvec4 v1r0_sum = vec4(%s + %s, 0.0);\n",
+		xgpu_text_append(&text, "\t%svec4 v1r0_sum = vec4(%s + %s, 0.0);\n", color_precision(),
 			(settings & 0x40) ? "(1.0 - clamp(v1.rgb, 0.0, 1.0))" : "clamp(v1.rgb, 0.0, 1.0)",
 			(settings & 0x20) ? "(1.0 - clamp(r0.rgb, 0.0, 1.0))" : "clamp(r0.rgb, 0.0, 1.0)");
 		if (settings & 0x80)
 			xgpu_text_append(&text, "\tv1r0_sum = clamp(v1r0_sum, 0.0, 1.0);\n");
-		xgpu_text_append(&text, "\tvec3 fA = ");
+		xgpu_text_append(&text, "\t%svec3 fA = ", color_precision());
 		final_input(&text, (final_abcd >> 24) & 0xff, FALSE);
-		xgpu_text_append(&text, ";\n\tvec3 fB = ");
+		xgpu_text_append(&text, ";\n\t%svec3 fB = ", color_precision());
 		final_input(&text, (final_abcd >> 16) & 0xff, FALSE);
-		xgpu_text_append(&text, ";\n\tvec3 fC = ");
+		xgpu_text_append(&text, ";\n\t%svec3 fC = ", color_precision());
 		final_input(&text, (final_abcd >> 8) & 0xff, FALSE);
-		xgpu_text_append(&text, ";\n\tvec3 fD = ");
+		xgpu_text_append(&text, ";\n\t%svec3 fD = ", color_precision());
 		final_input(&text, final_abcd & 0xff, FALSE);
-		xgpu_text_append(&text, ";\n\tfloat fG = ");
+		xgpu_text_append(&text, ";\n\t%sfloat fG = ", color_precision());
 		final_input(&text, (final_efg >> 8) & 0xff, TRUE);
-		xgpu_text_append(&text, ";\n\tvec4 result = vec4(fA * fB + (1.0 - fA) * fC + fD, fG);\n");
+		xgpu_text_append(&text, ";\n\t%svec4 result = vec4(fA * fB + (1.0 - fA) * fC + fD, fG);\n",
+			color_precision());
 	}
 
 	if (key->coverage_alpha)
