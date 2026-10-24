@@ -24,8 +24,10 @@ struct xgpu_capabilities
 	/* KHR_texture_compression_astc_ldr: DXT1 as ASTC where there is no S3TC
 	(display.dxt1_astc) */
 	BOOL astc;
-	/* ES 3.2, or the EXT/OES_draw_elements_base_vertex extension: glDrawElementsBaseVertex */
+	/* ES 3.2, or the EXT/OES_draw_elements_base_vertex extension: glDrawElementsBaseVertex,
+	and range_base_vertex its glDrawRangeElementsBaseVertex */
 	BOOL base_vertex;
+	BOOL range_base_vertex;
 	/* ES 3.1 with fragment atomic counters: exact visibility test counts */
 	BOOL atomic_counters;
 	/* GL_RGBA16F can be drawn into and blended (EXT_color_buffer_half_float

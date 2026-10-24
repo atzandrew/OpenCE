@@ -1883,16 +1883,24 @@ static void gl_initialize(void)
 			if (host_gl_has_extension("GL_EXT_draw_elements_base_vertex") && halo_glDrawElementsBaseVertexEXT)
 			{
 				halo_glDrawElementsBaseVertex = halo_glDrawElementsBaseVertexEXT;
+				halo_glDrawRangeElementsBaseVertex = halo_glDrawRangeElementsBaseVertexEXT;
 				xgpu_capabilities.base_vertex = TRUE;
 				base_vertex_source = "GL_EXT_draw_elements_base_vertex";
 			}
 			else if (host_gl_has_extension("GL_OES_draw_elements_base_vertex") && halo_glDrawElementsBaseVertexOES)
 			{
 				halo_glDrawElementsBaseVertex = halo_glDrawElementsBaseVertexOES;
+				halo_glDrawRangeElementsBaseVertex = halo_glDrawRangeElementsBaseVertexOES;
 				xgpu_capabilities.base_vertex = TRUE;
 				base_vertex_source = "GL_OES_draw_elements_base_vertex";
 			}
 		}
+		/* the draws pass the extent of their indices (index_extent's), so
+		that a driver which needs it (Mali: Panfrost runs the vertex shader
+		over the vertices from the least index to the greatest) does not
+		read every index again on the CPU for every draw */
+		xgpu_capabilities.range_base_vertex = xgpu_capabilities.base_vertex &&
+			halo_glDrawRangeElementsBaseVertex != NULL;
 		xgpu_capabilities.color_buffer_half_float = es32 ||
 			host_gl_has_extension("GL_EXT_color_buffer_half_float") ||
 			host_gl_has_extension("GL_EXT_color_buffer_float");
@@ -1910,10 +1918,11 @@ static void gl_initialize(void)
 			host_gl_has_extension("GL_ANGLE_texture_compression_dxt5"));
 		xgpu_capabilities.astc = host_gl_has_extension("GL_KHR_texture_compression_astc_ldr");
 		platform_log("OpenGL ES %d.%d: copy image %d, border clamp %d, anisotropy %d, S3TC %d, ASTC %d, "
-			"sample counting %d, base vertex %d (%s), half float targets %d",
+			"sample counting %d, base vertex %d (%s, with index ranges %d), half float targets %d",
 			(int)major, (int)minor, xgpu_capabilities.copy_image, xgpu_capabilities.border_clamp,
 			xgpu_capabilities.anisotropy, xgpu_capabilities.s3tc, xgpu_capabilities.astc, xgpu_capabilities.atomic_counters,
-			xgpu_capabilities.base_vertex, base_vertex_source, xgpu_capabilities.color_buffer_half_float);
+			xgpu_capabilities.base_vertex, base_vertex_source, xgpu_capabilities.range_base_vertex,
+			xgpu_capabilities.color_buffer_half_float);
 	}
 #else
 	if (config_boolean("debug.gl_debug"))
@@ -5785,6 +5794,24 @@ static BOOL index_cache_get(const WORD *indices, unsigned long count, unsigned l
 }
 #endif
 
+/* 16-bit indices from minimum to maximum, drawn from the attributes that
+start at vertex minimum; with their extent where the context takes it
+(xgpu_capabilities.range_base_vertex), which GL bounds before the base
+vertex is added */
+static void draw_elements_base_vertex(GLenum mode, GLsizei count, const void *offset, unsigned long minimum,
+	unsigned long maximum)
+{
+#ifdef HALO_GLES
+	if (xgpu_capabilities.range_base_vertex)
+	{
+		glDrawRangeElementsBaseVertex(mode, (GLuint)minimum, (GLuint)maximum, count, GL_UNSIGNED_SHORT, offset,
+			-(GLint)minimum);
+		return;
+	}
+#endif
+	glDrawElementsBaseVertex(mode, count, GL_UNSIGNED_SHORT, offset, -(GLint)minimum);
+}
+
 void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT vertex_count, CONST WORD *index_data)
 {
 	unsigned long minimum, maximum, index, count, generation = 0, index_offset = 0;
@@ -5820,8 +5847,8 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 	{
 		/* the attributes start at vertex minimum */
 		state_element_array_buffer(index_buffer);
-		glDrawElementsBaseVertex(primitive_mode(primitive_type), (GLsizei)vertex_count, GL_UNSIGNED_SHORT,
-			(const void *)index_offset, -(GLint)minimum);
+		draw_elements_base_vertex(primitive_mode(primitive_type), (GLsizei)vertex_count,
+			(const void *)index_offset, minimum, maximum);
 		return;
 	}
 	stats.streamed_bytes += vertex_count * sizeof(WORD);
@@ -5847,8 +5874,8 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 	}
 #endif
 	(void)index;
-	glDrawElementsBaseVertex(primitive_mode(primitive_type), (GLsizei)count, GL_UNSIGNED_SHORT,
-		(const void *)index_upload(source, count * sizeof(WORD)), -(GLint)minimum);
+	draw_elements_base_vertex(primitive_mode(primitive_type), (GLsizei)count,
+		(const void *)index_upload(source, count * sizeof(WORD)), minimum, maximum);
 	free(indices);
 }
 

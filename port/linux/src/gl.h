@@ -113,6 +113,7 @@ this list to generate the guest's entry points */
 	X(glDrawArrays) \
 	X(glDrawElements) \
 	X(glDrawElementsBaseVertex) \
+	X(glDrawRangeElementsBaseVertex) \
 	X(glCreateShader) \
 	X(glShaderSource) \
 	X(glCompileShader) \
@@ -142,7 +143,9 @@ context has the extension, never required (gl_functions.c). On ES 3.0 and
 3.1 these stand in for glDrawElementsBaseVertex */
 #define GL_OPTIONAL_FUNCTIONS(X) \
 	X(glDrawElementsBaseVertexEXT) \
-	X(glDrawElementsBaseVertexOES)
+	X(glDrawElementsBaseVertexOES) \
+	X(glDrawRangeElementsBaseVertexEXT) \
+	X(glDrawRangeElementsBaseVertexOES)
 /* ANDROID_GL_FUNCTIONS_END */
 #else
 #define GL_FUNCTIONS(X) \
@@ -363,6 +366,7 @@ pointers, sees the declarations without these aliases */
 #define glDrawArrays halo_glDrawArrays
 #define glDrawElements halo_glDrawElements
 #define glDrawElementsBaseVertex halo_glDrawElementsBaseVertex
+#define glDrawRangeElementsBaseVertex halo_glDrawRangeElementsBaseVertex
 #define glCreateShader halo_glCreateShader
 #define glShaderSource halo_glShaderSource
 #define glCompileShader halo_glCompileShader
