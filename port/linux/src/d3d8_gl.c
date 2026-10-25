@@ -728,12 +728,14 @@ struct gl_device
 	GLuint visibility_known[VISIBILITY_TEST_SLOTS];
 #ifdef HALO_GLES
 	/* with atomic counters: one counter per test of the frame, from 0 on
-	(counter_next), all of them zero at the frame's start: the buffer is
-	given new zeroed storage once a frame (D3DDevice_Present) rather than a
-	counter zeroed for each test, as a write into a buffer the frame's draws
-	use makes a tiling GPU's driver (Panfrost) flush the frame so far, the
-	whole screen stored and loaded again, at every test. counter_listed:
-	the active test has a counter of its own (not past the last) */
+	(counter_next), in the frame's buffer of the stream ring
+	(visibility_counters, one of counter_snapshots), all of them zero at the
+	frame's start: a buffer is zeroed once its frame's counts are read
+	rather than a counter zeroed for each test, as a write into a buffer the
+	frame's draws use makes a tiling GPU's driver (Panfrost) flush the frame
+	so far, the whole screen stored and loaded again, at every test.
+	counter_listed: the active test has a counter of its own (not past the
+	last) */
 	GLuint visibility_counters;
 	unsigned long counter_next;
 	unsigned long counter_active;
@@ -741,12 +743,12 @@ struct gl_device
 	/* Reading the counters waits for the draws that counted, which stops
 	the CPU until the GPU has caught up (the game asks at the start of the
 	next frame), halving the frame rate on drivers that queue frames (Zink,
-	Turnip). Instead, at the end of each frame the GPU copies them into the
-	frame's snapshot buffer of the stream ring, and the frame's tests (each
-	a result slot and its counter) are listed with it. Once its fence has
-	passed (two frames on, D3DDevice_Present) the CPU reads the snapshot
-	into counter_values and gives each listed slot its count: a result is
-	the latest count known, as the desktop query readback gives. */
+	Turnip). Instead, each frame counts into its own buffer of the stream
+	ring, and the frame's tests (each a result slot and its counter) are
+	listed with it. Once its fence has passed (two frames on,
+	D3DDevice_Present) the CPU reads the buffer into counter_values and
+	gives each listed slot its count: a result is the latest count known,
+	as the desktop query readback gives. */
 	GLuint counter_snapshots[STREAM_BUFFER_RING];
 	unsigned short ring_tests[STREAM_BUFFER_RING][VISIBILITY_TEST_SLOTS][2];
 	unsigned long ring_test_count[STREAM_BUFFER_RING];
@@ -2017,19 +2019,16 @@ static void gl_initialize(void)
 	{
 		int ring;
 
-		glGenBuffers(1, &device.visibility_counters);
-		glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, device.visibility_counters);
-		glBufferData(GL_ATOMIC_COUNTER_BUFFER, VISIBILITY_TEST_SLOTS * sizeof(GLuint), zero_counters,
-			GL_DYNAMIC_DRAW);
-		device.counter_next = 0;
-		glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
 		glGenBuffers(STREAM_BUFFER_RING, device.counter_snapshots);
 		for (ring = 0; ring < STREAM_BUFFER_RING; ring++)
 		{
-			glBindBuffer(GL_COPY_WRITE_BUFFER, device.counter_snapshots[ring]);
-			glBufferData(GL_COPY_WRITE_BUFFER, VISIBILITY_TEST_SLOTS * sizeof(GLuint), NULL, GL_STREAM_READ);
+			glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, device.counter_snapshots[ring]);
+			glBufferData(GL_ATOMIC_COUNTER_BUFFER, VISIBILITY_TEST_SLOTS * sizeof(GLuint), zero_counters,
+				GL_DYNAMIC_DRAW);
 		}
-		glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+		glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
+		device.visibility_counters = device.counter_snapshots[device.buffer_ring];
+		device.counter_next = 0;
 	}
 #endif
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
@@ -6893,23 +6892,12 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 #ifdef HALO_GLES
 		if (xgpu_capabilities.atomic_counters)
 		{
-			/* this frame's counts, for when the GPU is done with it (the
-			barrier makes the shaders' counter writes visible to the copy,
-			which ES 3.1 does not promise without one) */
+			/* this frame's counts stay in its own buffer, read once the
+			GPU has passed the frame's fence; the barrier makes the
+			shaders' counter writes visible to that read. No copy into
+			another buffer: a driver may copy buffers on the CPU (Panfrost),
+			waiting there for the whole frame to finish */
 			glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
-			glBindBuffer(GL_COPY_READ_BUFFER, device.visibility_counters);
-			glBindBuffer(GL_COPY_WRITE_BUFFER, device.counter_snapshots[device.buffer_ring]);
-			glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0,
-				VISIBILITY_TEST_SLOTS * sizeof(GLuint));
-			glBindBuffer(GL_COPY_READ_BUFFER, 0);
-			glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
-			/* the next frame's counters: new storage, zeroed, which the
-			driver gives without waiting for this frame's draws and copy */
-			glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, device.visibility_counters);
-			glBufferData(GL_ATOMIC_COUNTER_BUFFER, VISIBILITY_TEST_SLOTS * sizeof(GLuint), zero_counters,
-				GL_DYNAMIC_DRAW);
-			glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
-			device.counter_next = 0;
 		}
 		host_gl_fence_frame((unsigned int)device.buffer_ring);
 		device.buffer_ring = (device.buffer_ring + 1) % STREAM_BUFFER_RING;
@@ -6929,6 +6917,16 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 					device.counter_values[device.ring_tests[ring][test][1]];
 			}
 			device.ring_test_count[ring] = 0;
+			/* zero again for this frame's tests (the GPU is done with it) */
+			glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, device.counter_snapshots[ring]);
+			glBufferData(GL_ATOMIC_COUNTER_BUFFER, VISIBILITY_TEST_SLOTS * sizeof(GLuint), zero_counters,
+				GL_DYNAMIC_DRAW);
+			glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
+		}
+		if (xgpu_capabilities.atomic_counters)
+		{
+			device.visibility_counters = device.counter_snapshots[device.buffer_ring];
+			device.counter_next = 0;
 		}
 		device.stream_buffer = device.stream_buffers[device.buffer_ring];
 		device.index_buffer = device.index_buffers[device.buffer_ring];
