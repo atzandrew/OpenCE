@@ -596,6 +596,18 @@ void rasterizer_environment_shadow_draw(
 	struct vertex_buffer const *vertex_buffer);
 void rasterizer_environment_shadows_end(
 	void);
+/* port: batched shadows (display.shadow_batching,
+source/rasterizer/xbox/rasterizer_xbox_shadows.c) */
+boolean rasterizer_environment_shadows_batch_begin(
+	void);
+void rasterizer_environment_shadows_batch_project(
+	void);
+void rasterizer_environment_shadows_batch_end(
+	void);
+boolean rasterizer_environment_shadow_batched(
+	void);
+void rasterizer_environment_shadow_map_end(
+	void);
 void rasterizer_environment_diffuse_textures_end(
 	void);
 void rasterizer_environment_diffuse_texture_draw(

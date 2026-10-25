@@ -195,6 +195,28 @@ static struct rasterizer_model_begin_parameters const *local_parameters = NULL;
 static boolean shadow_setup = FALSE;
 static boolean shadow_used = FALSE;
 
+/* port: batched shadows (display.shadow_batching, render_object_shadows):
+in the maps pass each shadow, up to the capacity, draws its map into a set
+of targets of its own (rasterizer_shadow_targets_select) and convolves it
+there; in the cast pass the same shadows, in the same order, cast it on
+the environment from there, the screen's target taken up once between the
+passes. A shadow past the capacity does nothing in the maps pass and all
+of it, as the game's, in the cast pass */
+enum
+{
+	_shadow_batch_none = 0,
+	_shadow_batch_maps,
+	_shadow_batch_cast,
+};
+static short shadow_batch_pass = _shadow_batch_none;
+static short shadow_batch_capacity = 0;
+static short shadow_batch_index = 0;
+static short shadow_batch_current = 0;
+static boolean shadow_batched = FALSE;
+static boolean shadow_batch_drawn = FALSE;
+static boolean shadow_batch_has_set[RASTERIZER_SHADOW_TARGET_SETS];
+static boolean shadow_batch_used[RASTERIZER_SHADOW_TARGET_SETS];
+
 /* ---------- public code */
 
 void _rasterizer_environment_shadows_begin(
@@ -249,6 +271,55 @@ boolean _rasterizer_environment_shadow_begin(
 			"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox_shadows.c",
 			158,
 			object_bounding_radius>0.0f);
+
+		/* port: batched shadows */
+		shadow_batched = FALSE;
+		if (shadow_batch_pass != _shadow_batch_none)
+		{
+			shadow_batch_current = shadow_batch_index++;
+			if (shadow_batch_current < shadow_batch_capacity)
+			{
+				if (shadow_batch_pass == _shadow_batch_maps)
+				{
+					shadow_batch_has_set[shadow_batch_current] =
+						rasterizer_shadow_targets_select(shadow_batch_current);
+					shadow_batch_used[shadow_batch_current] = FALSE;
+				}
+				shadow_batched = shadow_batch_has_set[shadow_batch_current];
+			}
+			if (shadow_batched)
+			{
+				rasterizer_shadow_targets_select(shadow_batch_current);
+			}
+			else
+			{
+				rasterizer_shadow_targets_select(0);
+			}
+			if (shadow_batch_pass == _shadow_batch_maps && !shadow_batched)
+			{
+				return success;
+			}
+			if (shadow_batch_pass == _shadow_batch_cast && shadow_batched)
+			{
+				local_shadow_matrix = *shadow_matrix;
+				local_shadow_color = *shadow_color;
+				local_object_bounding_radius = object_bounding_radius;
+				if (shadow_volume_bounding_radius)
+				{
+					*shadow_volume_bounding_radius = object_bounding_radius;
+				}
+				local_parameters = 0;
+				shadow_setup = FALSE;
+				shadow_used = shadow_batch_used[shadow_batch_current];
+				/* the screen's target is up (..._batch_project) */
+				shadow_restored = TRUE;
+				return success;
+			}
+			if (shadow_batch_pass == _shadow_batch_maps)
+			{
+				shadow_batch_drawn = TRUE;
+			}
+		}
 
 		IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_CULLMODE, D3DCULL_CCW);
 		IDirect3DDevice8_SetRenderState(
@@ -580,7 +651,9 @@ void _rasterizer_environment_shadow_draw(
 	{
 		if (!shadow_setup)
 		{
-			if (rasterizer_debug_options.shadow_convolution_enabled)
+			/* port: a batched shadow's map was convolved in the maps pass */
+			if (rasterizer_debug_options.shadow_convolution_enabled &&
+				!(shadow_batch_pass == _shadow_batch_cast && shadow_batched))
 			{
 				rasterizer_shadow_convolve();
 			}
@@ -844,6 +917,80 @@ void _rasterizer_environment_shadows_end(
 {
 	rasterizer_profile_end(_rasterizer_profile_environment_shadows);
 
+	return;
+}
+
+/* port: batched shadows (above, at the globals); FALSE, the shadows
+as the game's */
+boolean rasterizer_environment_shadows_batch_begin(
+	void)
+{
+	long capacity = halo_shadow_batch_capacity();
+
+	shadow_batch_pass = _shadow_batch_none;
+	shadow_batched = FALSE;
+	if (global_window_parameters.rasterizer_target != _rasterizer_target_render_primary ||
+		!rasterizer_debug_options.draw_environment_shadows ||
+		capacity <= 0)
+	{
+		return FALSE;
+	}
+	if (capacity > RASTERIZER_SHADOW_TARGET_SETS)
+		capacity = RASTERIZER_SHADOW_TARGET_SETS;
+	shadow_batch_capacity = (short)capacity;
+	/* the game's pair: set 0 */
+	rasterizer_shadow_targets_select(-1);
+	shadow_batch_index = 0;
+	shadow_batch_drawn = FALSE;
+	shadow_batch_pass = _shadow_batch_maps;
+	return TRUE;
+}
+
+/* between the passes: the screen's target taken up again, as a shadow's
+first cast would (_rasterizer_environment_shadow_draw) */
+void rasterizer_environment_shadows_batch_project(
+	void)
+{
+	if (shadow_batch_drawn)
+	{
+		rasterizer_set_target(global_window_parameters.rasterizer_target, 0, 0, FALSE, TRUE);
+	}
+	shadow_batch_pass = _shadow_batch_cast;
+	shadow_batch_index = 0;
+	shadow_batched = FALSE;
+	return;
+}
+
+void rasterizer_environment_shadows_batch_end(
+	void)
+{
+	shadow_batch_pass = _shadow_batch_none;
+	shadow_batched = FALSE;
+	rasterizer_shadow_targets_select(0);
+	return;
+}
+
+/* whether the shadow just begun is batched (its map drawn in the maps
+pass, cast in the cast pass) */
+boolean rasterizer_environment_shadow_batched(
+	void)
+{
+	return shadow_batch_pass != _shadow_batch_none && shadow_batched;
+}
+
+/* the maps pass, after a batched shadow's models: its map convolved in its
+own targets, ready to cast */
+void rasterizer_environment_shadow_map_end(
+	void)
+{
+	if (shadow_batch_pass == _shadow_batch_maps && shadow_batched)
+	{
+		shadow_batch_used[shadow_batch_current] = shadow_used;
+		if (shadow_used && rasterizer_debug_options.shadow_convolution_enabled)
+		{
+			rasterizer_shadow_convolve();
+		}
+	}
 	return;
 }
 

@@ -263,6 +263,15 @@ extern short debug_rasterizer_light_count;
 
 boolean render_shadows = TRUE;
 
+/* port: the pass of a batched shadow (render_object_shadows) */
+enum
+{
+	_shadow_pass_whole = 0,
+	_shadow_pass_maps,
+	_shadow_pass_cast,
+};
+static short shadow_pass = _shadow_pass_whole;
+
 static struct profile_section render_objects_section =
 	{ "render_objects", NONE, TRUE };
 static struct profile_section render_object_shadows_section =
@@ -392,7 +401,27 @@ void render_object_shadows(
 		rasterizer_environment_shadows_begin();
 
 		data.shadow = TRUE;
-		process_rendered_objects(&data);
+		/* port: batched (display.shadow_batching), the objects twice: first
+		every shadow's map, each into its own target, then every shadow cast
+		onto the environment, so that the screen's target is left and taken
+		up again once rather than for each shadow (each time a whole-screen
+		store and load on a tiling GPU). The same objects come in the same
+		order both times; those past the targets there are cast as before,
+		in the second */
+		if (rasterizer_environment_shadows_batch_begin())
+		{
+			shadow_pass = _shadow_pass_maps;
+			process_rendered_objects(&data);
+			rasterizer_environment_shadows_batch_project();
+			shadow_pass = _shadow_pass_cast;
+			process_rendered_objects(&data);
+			rasterizer_environment_shadows_batch_end();
+			shadow_pass = _shadow_pass_whole;
+		}
+		else
+		{
+			process_rendered_objects(&data);
+		}
 
 		rasterizer_environment_shadows_end();
 	}
@@ -1155,8 +1184,25 @@ static void render_object(
 
 				if (render_object_shadow_begin(data, darkness_fraction * size_fraction))
 				{
-					render_object_list(data, NULL, data->object_index);
-					render_object_shadow_end(data);
+					boolean batched = rasterizer_environment_shadow_batched();
+
+					if (shadow_pass == _shadow_pass_maps)
+					{
+						if (batched)
+						{
+							render_object_list(data, NULL, data->object_index);
+							rasterizer_environment_shadow_map_end();
+						}
+					}
+					else if (shadow_pass == _shadow_pass_cast && batched)
+					{
+						render_object_shadow_end(data);
+					}
+					else
+					{
+						render_object_list(data, NULL, data->object_index);
+						render_object_shadow_end(data);
+					}
 				}
 			}
 		}

@@ -93,6 +93,10 @@ void rasterizer_set_target_as_texture(
 	short stage,
 	short target,
 	short maximum_mipmap_level);
+/* port: the shadow targets (primary and secondary) of a batched shadow */
+#define RASTERIZER_SHADOW_TARGET_SETS 16
+boolean rasterizer_shadow_targets_select(
+	short set);
 void SetRenderStateSmart(
 	D3DRENDERSTATETYPE state,
 	unsigned long value);

@@ -1522,6 +1522,56 @@ void rasterizer_set_target_as_texture(
 	return;
 }
 
+/* port: set 0 is the game's pair, as it was when set -1 was asked for
+(each batch's start: a new device makes it anew); the others, for the
+shadows batched before the first is cast (rasterizer_xbox_shadows.c), are
+made as the game's are the first time they are asked for, and kept. FALSE
+if one cannot be made */
+boolean rasterizer_shadow_targets_select(
+	short set)
+{
+	static D3DTexture *textures[RASTERIZER_SHADOW_TARGET_SETS][2];
+	static D3DSurface *surfaces[RASTERIZER_SHADOW_TARGET_SETS][2];
+	static boolean failed[RASTERIZER_SHADOW_TARGET_SETS];
+	short which;
+
+	if (set < 0)
+	{
+		textures[0][0] = global_d3d_texture_shadow_primary;
+		surfaces[0][0] = global_d3d_surface_shadow_primary;
+		textures[0][1] = global_d3d_texture_shadow_secondary;
+		surfaces[0][1] = global_d3d_surface_shadow_secondary;
+		return TRUE;
+	}
+	if (set >= RASTERIZER_SHADOW_TARGET_SETS || !textures[0][0])
+		return FALSE;
+	if (set && !textures[set][0])
+	{
+		if (failed[set])
+			return FALSE;
+		for (which = 0; which < 2; which++)
+		{
+			long size = which ? RASTERIZER_TARGET_SHADOW_SECONDARY_SIZE : RASTERIZER_TARGET_SHADOW_PRIMARY_SIZE;
+
+			if (IDirect3DDevice8_CreateTexture(global_d3d_device, size, size, 1, D3DUSAGE_RENDERTARGET,
+					D3DFMT_R5G6B5, D3DPOOL_DEFAULT, &textures[set][which]) < 0 ||
+				!textures[set][which] ||
+				IDirect3DTexture8_GetSurfaceLevel(textures[set][which], 0, &surfaces[set][which]) < 0 ||
+				!surfaces[set][which])
+			{
+				textures[set][0] = NULL;
+				failed[set] = TRUE;
+				return FALSE;
+			}
+		}
+	}
+	global_d3d_texture_shadow_primary = textures[set][0];
+	global_d3d_surface_shadow_primary = surfaces[set][0];
+	global_d3d_texture_shadow_secondary = textures[set][1];
+	global_d3d_surface_shadow_secondary = surfaces[set][1];
+	return TRUE;
+}
+
 void rasterizer_set_target(
 	short target,
 	short mipmap_index,

@@ -154,6 +154,11 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"OpenGL ES: the pixel shaders' colours in 16-bit (mediump) arithmetic,\n"
 		"faster on GPUs that have it (Mali); coordinates stay 32-bit." },
+	{ "display.shadow_batching", _config_boolean, "true", "HALO_SHADOW_BATCHING", _environment_value,
+		_platform_all,
+		"Draw the shadows' maps before casting any of them, so that the screen\n"
+		"is left once rather than for each shadow (faster on tiling GPUs, such\n"
+		"as phones'); false, one at a time as the Xbox." },
 	{ "display.shadow_resolution", _config_integer, "128", "HALO_SHADOW_RESOLUTION", _environment_value,
 		_platform_all,
 		"The size the objects' shadows are drawn at, in pixels each way: 128 as\n"

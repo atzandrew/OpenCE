@@ -352,6 +352,21 @@ static long shadow_scale_choose(void)
 	return scale;
 }
 
+long halo_shadow_map_scale(void);
+
+/* display.shadow_batching: up to 16 shadows' maps (two targets each),
+fewer at a larger display.shadow_resolution: 16 MB of them at most, at 4
+bytes a pixel */
+long halo_shadow_batch_capacity(void)
+{
+	long scale = halo_shadow_map_scale(), capacity;
+
+	if (!config_boolean("display.shadow_batching"))
+		return 0;
+	capacity = 16 / scale;
+	return capacity < 1 ? 1 : capacity;
+}
+
 /* the shadow maps' pixels for each of their 128 texels each way */
 long halo_shadow_map_scale(void)
 {

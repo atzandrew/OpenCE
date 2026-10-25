@@ -70,6 +70,9 @@ long halo_screen_commit(void);
 /* the shadow maps' pixels for each of their 128 texels each way, a power of
 two (display.shadow_resolution) */
 long halo_shadow_map_scale(void);
+/* how many shadows have their maps drawn before the first is cast
+(display.shadow_batching, source/render/render_objects.c); 0, none */
+long halo_shadow_batch_capacity(void);
 /* how many times a model's size in the 480-line screen's pixels to measure
 it at (display.model_detail, source/models/models.c): level nonzero, to
 choose its level of detail, otherwise whether it is drawn */
