@@ -73,6 +73,10 @@ long halo_shadow_map_scale(void);
 /* how many shadows have their maps drawn before the first is cast
 (display.shadow_batching, source/render/render_objects.c); 0, none */
 long halo_shadow_batch_capacity(void);
+/* the size in the 480-line screen's pixels below which an object casts
+no shadow; its shadow fades in over the next 15 (display.shadow_minimum_size,
+source/render/render_objects.c) */
+float halo_shadow_minimum_pixels(void);
 /* how many times a model's size in the 480-line screen's pixels to measure
 it at (display.model_detail, source/models/models.c): level nonzero, to
 choose its level of detail, otherwise whether it is drawn */

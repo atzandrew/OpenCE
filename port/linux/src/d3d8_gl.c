@@ -367,6 +367,22 @@ long halo_shadow_batch_capacity(void)
 	return capacity < 1 ? 1 : capacity;
 }
 
+/* display.shadow_minimum_size, read again when the settings change */
+float halo_shadow_minimum_pixels(void)
+{
+	static float pixels = -1.f;
+	static unsigned long read_at;
+
+	if (pixels < 0.f || read_at != config_changes())
+	{
+		long size = config_integer("display.shadow_minimum_size");
+
+		read_at = config_changes();
+		pixels = (float)(size < 0 ? 0 : size);
+	}
+	return pixels;
+}
+
 /* the shadow maps' pixels for each of their 128 texels each way */
 long halo_shadow_map_scale(void)
 {

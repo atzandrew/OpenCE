@@ -146,7 +146,8 @@ enum
 #define OBJECT_RENDER_STATE_LARGE_PIXELS 400.f
 #define OBJECT_RENDER_STATE_SMALL_PIXELS 100.f
 
-#define OBJECT_SHADOW_MINIMUM_PIXELS 30.f
+/* port: 30 as on the Xbox, or display.shadow_minimum_size */
+#define OBJECT_SHADOW_MINIMUM_PIXELS halo_shadow_minimum_pixels()
 #define OBJECT_SHADOW_MINIMUM_DARKNESS 0.19f
 
 #define OBJECT_LIGHTING_MAXIMUM_COLOR_DELTA 0.03f
