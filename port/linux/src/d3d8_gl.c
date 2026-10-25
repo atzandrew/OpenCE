@@ -604,6 +604,10 @@ vertices. */
 #define INDEX_BUFFER_SIZE (8 * 1024 * 1024)
 #endif
 #define VISIBILITY_TEST_SLOTS 4096
+#ifdef HALO_GLES
+/* the visibility counters' starting values (device.visibility_counters) */
+static const GLuint zero_counters[VISIBILITY_TEST_SLOTS];
+#endif
 
 #ifndef HALO_GLES
 #define VISIBILITY_BATCH_COUNT 3
@@ -723,10 +727,17 @@ struct gl_device
 	count stands. A frame of The Library's lights makes hundreds of tests. */
 	GLuint visibility_known[VISIBILITY_TEST_SLOTS];
 #ifdef HALO_GLES
-	/* with atomic counters: one counter per test, used as a ring */
+	/* with atomic counters: one counter per test of the frame, from 0 on
+	(counter_next), all of them zero at the frame's start: the buffer is
+	given new zeroed storage once a frame (D3DDevice_Present) rather than a
+	counter zeroed for each test, as a write into a buffer the frame's draws
+	use makes a tiling GPU's driver (Panfrost) flush the frame so far, the
+	whole screen stored and loaded again, at every test. counter_listed:
+	the active test has a counter of its own (not past the last) */
 	GLuint visibility_counters;
 	unsigned long counter_next;
 	unsigned long counter_active;
+	BOOL counter_listed;
 	/* Reading the counters waits for the draws that counted, which stops
 	the CPU until the GPU has caught up (the game asks at the start of the
 	next frame), halving the frame rate on drivers that queue frames (Zink,
@@ -2008,7 +2019,9 @@ static void gl_initialize(void)
 
 		glGenBuffers(1, &device.visibility_counters);
 		glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, device.visibility_counters);
-		glBufferData(GL_ATOMIC_COUNTER_BUFFER, VISIBILITY_TEST_SLOTS * sizeof(GLuint), NULL, GL_DYNAMIC_DRAW);
+		glBufferData(GL_ATOMIC_COUNTER_BUFFER, VISIBILITY_TEST_SLOTS * sizeof(GLuint), zero_counters,
+			GL_DYNAMIC_DRAW);
+		device.counter_next = 0;
 		glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
 		glGenBuffers(STREAM_BUFFER_RING, device.counter_snapshots);
 		for (ring = 0; ring < STREAM_BUFFER_RING; ring++)
@@ -2628,14 +2641,11 @@ void WINAPI D3DDevice_BeginVisibilityTest(void)
 #ifdef HALO_GLES
 	if (xgpu_capabilities.atomic_counters)
 	{
-		const GLuint zero = 0;
-
-		device.counter_next = (device.counter_next + 1) % VISIBILITY_TEST_SLOTS;
-		device.counter_active = device.counter_next;
-		glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, device.visibility_counters);
-		host_gl_buffer_write(GL_ATOMIC_COUNTER_BUFFER, (unsigned int)(device.counter_active * sizeof(GLuint)),
-			sizeof(zero), &zero);
-		glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
+		/* the frame's next counter, zero since the frame began; past the
+		last, the test counts into the last and is not listed, its slot
+		keeping its earlier count */
+		device.counter_listed = device.counter_next < VISIBILITY_TEST_SLOTS;
+		device.counter_active = device.counter_listed ? device.counter_next++ : VISIBILITY_TEST_SLOTS - 1;
 		return;
 	}
 #else
@@ -2682,7 +2692,7 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 
 		/* (a slot tested twice in a frame is listed twice: the later
 		counter, resolved after, wins) */
-		if (*count < VISIBILITY_TEST_SLOTS)
+		if (device.counter_listed && *count < VISIBILITY_TEST_SLOTS)
 		{
 			device.ring_tests[device.buffer_ring][*count][0] = (unsigned short)index;
 			device.ring_tests[device.buffer_ring][*count][1] = (unsigned short)device.counter_active;
@@ -6893,6 +6903,13 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 				VISIBILITY_TEST_SLOTS * sizeof(GLuint));
 			glBindBuffer(GL_COPY_READ_BUFFER, 0);
 			glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+			/* the next frame's counters: new storage, zeroed, which the
+			driver gives without waiting for this frame's draws and copy */
+			glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, device.visibility_counters);
+			glBufferData(GL_ATOMIC_COUNTER_BUFFER, VISIBILITY_TEST_SLOTS * sizeof(GLuint), zero_counters,
+				GL_DYNAMIC_DRAW);
+			glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
+			device.counter_next = 0;
 		}
 		host_gl_fence_frame((unsigned int)device.buffer_ring);
 		device.buffer_ring = (device.buffer_ring + 1) % STREAM_BUFFER_RING;
