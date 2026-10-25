@@ -652,6 +652,8 @@ char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key)
 
 #ifdef HALO_GLES
 	xgpu_text_append(&text, "#version %s\n", xgpu_capabilities.shading_language);
+	if (key->framebuffer_blend)
+		xgpu_text_append(&text, "#extension GL_EXT_shader_framebuffer_fetch : require\n");
 	if (key->count_samples)
 	{
 		/* samples that pass the depth and stencil tests, as the NV2A's
@@ -678,9 +680,12 @@ char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key)
 		"in vec4 xT1;\n"
 		"in vec4 xT2;\n"
 		"in vec4 xT3;\n"
-		"in float xFog;\n"
-		"layout(location = 0) out vec4 fragment_color;\n"
-		XGPU_PIXEL_UNIFORMS);
+		"in float xFog;\n");
+	/* (with framebuffer_blend, fragment_color holds the target's pixel
+	when the shader starts) */
+	xgpu_text_append(&text, "layout(location = 0) %s vec4 fragment_color;\n",
+		key->framebuffer_blend ? "inout" : "out");
+	xgpu_text_append(&text, XGPU_PIXEL_UNIFORMS);
 	for (stage = 0; stage < 4; stage++)
 		xgpu_text_append(&text, "uniform %s tex%d;\n", sampler_declaration(key->sampler_type[stage]), stage);
 	if (key->source_blend)
@@ -827,6 +832,19 @@ char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key)
 
 		xgpu_text_append(&text, "\tfragment_color = clamp(result, 0.0, 1.0) * %s;\n}\n",
 			factors[(key->source_blend - 1) & 3]);
+		return text.buffer;
+	}
+	if (key->framebuffer_blend)
+	{
+		/* the GL blend's sums: the source clamped, as a target takes it,
+		the result left for the target to clamp (none, a float one) */
+		static const char *const blends[] =
+		{
+			"2.0 * source * fragment_color", "min(source, fragment_color)", "max(source, fragment_color)"
+		};
+
+		xgpu_text_append(&text, "\tvec4 source = clamp(result, 0.0, 1.0);\n\tfragment_color = %s;\n}\n",
+			blends[(key->framebuffer_blend - 1) % 3]);
 		return text.buffer;
 	}
 	xgpu_text_append(&text, "\tfragment_color = clamp(result, 0.0, 1.0);\n}\n");

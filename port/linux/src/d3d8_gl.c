@@ -1019,6 +1019,55 @@ static unsigned char source_blend_in_shader(void)
 	return 0;
 }
 
+/* display.shader_blending: "auto" is on for the GPUs whose blending
+hardware lacks these blends (Mali Midgard, "Mali-T": the driver runs them as
+a blend shader of its own for each draw, slow on the CPU and the GPU) */
+static BOOL shader_blending_enabled(void)
+{
+#ifdef HALO_GLES
+	static int enabled = -1;
+
+	if (enabled < 0)
+	{
+		const char *setting = config_string("display.shader_blending");
+		const char *renderer = (const char *)glGetString(GL_RENDERER);
+
+		if (!strcmp(setting, "true"))
+			enabled = 1;
+		else if (!strcmp(setting, "false"))
+			enabled = 0;
+		else
+			enabled = renderer && strstr(renderer, "Mali-T") ? 1 : 0;
+		enabled = enabled && xgpu_capabilities.framebuffer_fetch;
+		platform_log("GPU: blends in the pixel shaders %s", enabled ? "on" : "off");
+	}
+	return enabled != 0;
+#else
+	return FALSE;
+#endif
+}
+
+/* the blend the pixel shader does from the target's pixel
+(nv2a_pixel_shader_key's framebuffer_blend), with the GL blend off: the
+blends a Midgard blending unit cannot do (display.shader_blending); 0
+otherwise */
+static unsigned char framebuffer_blend_in_shader(void)
+{
+	DWORD operation = D3D__RenderState[D3DRS_BLENDOP];
+
+	if (!D3D__RenderState[D3DRS_ALPHABLENDENABLE] || !shader_blending_enabled() || source_blend_in_shader())
+		return 0;
+	if (operation == D3DBLENDOP_MIN)
+		return 2;
+	if (operation == D3DBLENDOP_MAX)
+		return 3;
+	if (operation != D3DBLENDOP_SUBTRACT && operation != D3DBLENDOP_REVSUBTRACT &&
+		operation != D3DBLENDOP_REVSUBTRACTSIGNED && D3D__RenderState[D3DRS_SRCBLEND] == D3DBLEND_DESTCOLOR &&
+		D3D__RenderState[D3DRS_DESTBLEND] == D3DBLEND_SRCCOLOR)
+		return 1;
+	return 0;
+}
+
 static void state_enable(unsigned char *shadow, GLenum capability, BOOL enabled)
 {
 	unsigned char value = enabled ? 1 : 0;
@@ -1961,12 +2010,13 @@ static void gl_initialize(void)
 			host_gl_has_extension("GL_ANGLE_texture_compression_dxt3") &&
 			host_gl_has_extension("GL_ANGLE_texture_compression_dxt5"));
 		xgpu_capabilities.astc = host_gl_has_extension("GL_KHR_texture_compression_astc_ldr");
+		xgpu_capabilities.framebuffer_fetch = host_gl_has_extension("GL_EXT_shader_framebuffer_fetch");
 		platform_log("OpenGL ES %d.%d: copy image %d, border clamp %d, anisotropy %d, S3TC %d, ASTC %d, "
-			"sample counting %d, base vertex %d (%s, with index ranges %d), half float targets %d",
+			"sample counting %d, base vertex %d (%s, with index ranges %d), half float targets %d, framebuffer fetch %d",
 			(int)major, (int)minor, xgpu_capabilities.copy_image, xgpu_capabilities.border_clamp,
 			xgpu_capabilities.anisotropy, xgpu_capabilities.s3tc, xgpu_capabilities.astc, xgpu_capabilities.atomic_counters,
 			xgpu_capabilities.base_vertex, base_vertex_source, xgpu_capabilities.range_base_vertex,
-			xgpu_capabilities.color_buffer_half_float);
+			xgpu_capabilities.color_buffer_half_float, xgpu_capabilities.framebuffer_fetch);
 	}
 #else
 	if (config_boolean("debug.gl_debug"))
@@ -4085,8 +4135,9 @@ static void apply_raster_state(BOOL has_depth)
 		}
 	}
 
-	state_enable(&gl_state.blend, GL_BLEND, rs[D3DRS_ALPHABLENDENABLE] != 0);
-	if (rs[D3DRS_ALPHABLENDENABLE])
+	/* (a blend the pixel shader does: framebuffer_blend_in_shader) */
+	state_enable(&gl_state.blend, GL_BLEND, rs[D3DRS_ALPHABLENDENABLE] != 0 && !framebuffer_blend_in_shader());
+	if (rs[D3DRS_ALPHABLENDENABLE] && gl_state.blend)
 	{
 		GLenum equation = blend_equation(rs[D3DRS_BLENDOP]);
 		float blend_color[4];
@@ -4358,6 +4409,7 @@ static struct program_entry *prepare_draw(BOOL immediate)
 #endif
 	key.fog_enable = D3D__RenderState[D3DRS_FOGENABLE] != 0;
 	key.source_blend = source_blend_in_shader();
+	key.framebuffer_blend = framebuffer_blend_in_shader();
 	key.fog_table_mode = (unsigned char)D3D__RenderState[D3DRS_FOGTABLEMODE];
 #ifdef HALO_GLES
 	key.count_samples = device.visibility_test_active && xgpu_capabilities.atomic_counters;

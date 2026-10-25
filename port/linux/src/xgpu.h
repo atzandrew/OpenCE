@@ -33,6 +33,9 @@ struct xgpu_capabilities
 	/* GL_RGBA16F can be drawn into and blended (EXT_color_buffer_half_float
 	or EXT_color_buffer_float): display.hdr's back buffer */
 	BOOL color_buffer_half_float;
+	/* EXT_shader_framebuffer_fetch: a pixel shader reads the target's
+	pixel (display.shader_blending) */
+	BOOL framebuffer_fetch;
 	/* "300 es" or "310 es" */
 	const char *shading_language;
 };
@@ -164,6 +167,11 @@ struct nv2a_pixel_shader_key
 	blend of a constant color factor with a constant alpha one, as the
 	meters' (shader_transparent_meter) */
 	unsigned char source_blend;
+	/* the blend done here from the target's pixel, with the GL blend off
+	(display.shader_blending, GLES): 1 twice the source times the
+	destination (D3DBLEND_DESTCOLOR, D3DBLEND_SRCCOLOR), 2 the least of
+	the two (D3DBLENDOP_MIN), 3 the greatest (D3DBLENDOP_MAX); 0 none */
+	unsigned char framebuffer_blend;
 };
 
 char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key);

@@ -159,6 +159,11 @@ static const struct config_setting config_settings[] =
 		"Draw the shadows' maps before casting any of them, so that the screen\n"
 		"is left once rather than for each shadow (faster on tiling GPUs, such\n"
 		"as phones'); false, one at a time as the Xbox." },
+	{ "display.shader_blending", _config_string, "\"auto\"", "HALO_SHADER_BLENDING", _environment_value,
+		_platform_all,
+		"OpenGL ES: the blends a GPU's blending unit lacks (twice the source\n"
+		"times the destination, min, max) done in the pixel shaders: \"auto\"\n"
+		"for Mali Midgard (Mali-T), \"true\" or \"false\"." },
 	{ "display.shadow_minimum_size", _config_integer, "30", "HALO_SHADOW_MINIMUM_SIZE", _environment_value,
 		_platform_all,
 		"The size on screen, in pixels of a 480-line screen, below which an\n"
